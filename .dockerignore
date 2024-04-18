@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+.idea
+venv
+.venv
+ENV
+env.bak
+venv.bak
+.python-version
+portfolio.db
+reports
+help.txt
