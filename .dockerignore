@@ -3,11 +3,12 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-env
+.env
 .idea
 venv
 .venv
-ENV
+.env
+.env
 env.bak
 venv.bak
 .python-version

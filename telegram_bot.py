@@ -1,11 +1,12 @@
 import asyncio
 import os
+from dotenv import load_dotenv
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
-from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, plot_portfolio_performance, \
-    fetch_option_data_and_show_returns
+from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, \
+    plot_portfolio_performance, fetch_option_data_and_show_returns
 from commands_for_options import add_option_start, option_ticker_received, option_quantity_received, \
     option_purchase_price_received, option_purchase_date_received, option_final_confirmation, remove_option_start, \
     option_remove_ticker_received, option_remove_purchase_date_received, option_remove_final_confirmation
@@ -19,9 +20,10 @@ REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
 (OPTION_TICKER, OPTION_QUANTITY, OPTION_PURCHASE_DATE, OPTION_PURCHASE_PRICE, OPTION_CONFIRMATION) = range(5)
 (OPTION_REMOVE_TICKER, OPTION_REMOVE_PURCHASE_DATE, OPTION_REMOVE_CONFIRMATION) = range(2, 5)
 
+load_dotenv()
 ADMIN_USER_IDS = [
-    os.getenv('ADMIN_TELEGRAM_ID_1'),
-    os.getenv('ADMIN_TELEGRAM_ID_2')
+    int(os.getenv('ADMIN_TELEGRAM_ID_1')),
+    int(os.getenv('ADMIN_TELEGRAM_ID_2'))
 ]
 
 
