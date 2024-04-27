@@ -1,12 +1,16 @@
 import asyncio
 import os
 from dotenv import load_dotenv
+import yfinance as yf
+from datetime import datetime, timedelta
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
+from commands_for_calendar import find_next_first_friday
 from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, \
-    plot_portfolio_performance, fetch_option_data_and_show_returns
+    plot_portfolio_performance, fetch_option_data_and_show_returns, find_current_price, find_previous_price
 from commands_for_options import add_option_start, option_ticker_received, option_quantity_received, \
     option_purchase_price_received, option_purchase_date_received, option_final_confirmation, remove_option_start, \
     option_remove_ticker_received, option_remove_purchase_date_received, option_remove_final_confirmation
@@ -69,6 +73,37 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Delete the images after sending
         os.remove('portfolio_table.png')
         os.remove('portfolio_performance.png')
+
+
+async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("Fetching data for VOO... Please wait.")
+
+    current_price = await asyncio.to_thread(find_current_price, "VOO")
+    previous_price = await asyncio.to_thread(find_previous_price, "VOO")
+
+    if current_price is not None and previous_price is not None:
+        percentage_change = round(((current_price - previous_price) / previous_price) * 100, 2)
+
+        # Determine the quantity to suggest
+        if percentage_change > -10:
+            suggestion = "to buy one"
+        elif -20 < percentage_change <= -10:
+            suggestion = "to think about buying a second"
+        else:
+            suggestion = "to buy two"
+
+        next_first_friday = find_next_first_friday()
+
+        summary_message = (
+            f"Hello, Boss. It is time to purchase another VOO.\n"
+            f"\nPrevious price: ${previous_price:.2f}\n"
+            f"Current price: ${current_price:.2f}\n"
+            f"The change is {percentage_change:.2f}%, therefore we suggest <i>{suggestion}</i> VOO.\n"
+            f"\nThe next first Friday of the month will be {next_first_friday.strftime('%Y-%m-%d')}. You can set up a reminder on that day!"
+        )
+        await update.message.reply_text(summary_message, parse_mode='HTML')
+    else:
+        await update.message.reply_text("Failed to retrieve price data for VOO.")
 
 
 async def show_option_returns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -151,6 +186,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("portfolio", portfolio))
     application.add_handler(CommandHandler("show_option_returns", show_option_returns))
+    application.add_handler(CommandHandler("month_summary", month_summary))
     application.add_handler(add_option_conv_handler)
     application.add_handler(remove_option_conv_handler)
 

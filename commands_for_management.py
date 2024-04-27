@@ -308,5 +308,25 @@ def show_portfolio_as_image(portfolio, filename='portfolio_table.png'):
     plt.close(fig)
 
 
+def find_current_price(ticker_symbol):
+    """Fetch the current price of the stock."""
+    ticker = yf.Ticker(ticker_symbol)
+    hist = ticker.history(period="1mo")
+    if not hist.empty:
+        return hist['Close'].iloc[-1]
+    else:
+        return None
+
+
+def find_previous_price(ticker_symbol):
+    """Fetch the previous price of the stock from a month ago."""
+    ticker = yf.Ticker(ticker_symbol)
+    hist = ticker.history(period="1mo")
+    if not hist.empty:
+        return hist['Close'].iloc[0]
+    else:
+        return None
+
+
 # Portfolio information
 db_path = 'portfolio.db'
