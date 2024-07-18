@@ -253,6 +253,7 @@ def calculate_performance(portfolio):
     totals = pd.DataFrame(portfolio.sum(numeric_only=True)).T
     totals['ticker'] = 'total'  # Ensure this matches the actual DataFrame if needed
     totals['current price'] = 'N/A'
+    totals['dividends'] = 'N/A'
     totals['purchase_price'] = 'N/A'
     totals['percentage return'] = (totals['total return'] / totals['investment value'] * 100).round(2)
     portfolio = pd.concat([portfolio, totals], ignore_index=True)

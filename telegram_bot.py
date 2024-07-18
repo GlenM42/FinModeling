@@ -1,11 +1,8 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-import yfinance as yf
-from datetime import datetime, timedelta
 
 from telegram import Update
-from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
 from commands_for_calendar import find_next_first_friday
