@@ -10,6 +10,7 @@ charset-normalizer==3.3.2
 contourpy==1.2.0
 cssselect==1.2.0
 cycler==0.12.1
+decorator==5.1.1
 fake-useragent==1.5.1
 feedparser==6.0.11
 financetoolkit==1.8.4
@@ -36,6 +37,7 @@ pandas==2.2.1
 parse==1.20.1
 peewee==3.17.1
 pillow==10.2.0
+py==1.11.0
 pyee==11.1.0
 pyparsing==3.1.2
 PyPDF2==3.0.1
@@ -49,6 +51,7 @@ pytz==2024.1
 reportlab==4.1.0
 requests==2.31.0
 requests-html==0.10.0
+retry==0.9.2
 scikit-learn==1.4.1.post1
 scipy==1.12.0
 seaborn==0.13.2
