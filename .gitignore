@@ -13,6 +13,5 @@ venv.bak
 .python-version
 portfolio.db
 reports
-help.txt
 docker-compose.yml
 .idea
