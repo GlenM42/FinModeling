@@ -1,8 +1,12 @@
 from datetime import datetime
+from retry import retry
 
 import pytz
 import seaborn as sns
 import yfinance as yf
+
+import matplotlib
+matplotlib.use('Agg')
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -35,6 +39,7 @@ def initialize_portfolio():
     return portfolio
 
 
+@retry(tries=3, delay=2)
 def fetch_stock_data(ticker, start_date_str):
     """
     Fetches the current stock/ETF price and calculates dividends issued after the start_date_str and before the current
@@ -67,7 +72,7 @@ def fetch_stock_data(ticker, start_date_str):
         return price, dividends
     except Exception as e:
         print(f"An error occurred while fetching data for {ticker}: {e}")
-        return None, 0
+        return None, pd.Series(dtype=float)
 
 
 def fetch_option_data_and_show_returns():
@@ -263,24 +268,41 @@ def calculate_performance(portfolio):
 def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
     """
     Plots the portfolio's absolute and percentage returns, including a bar for the total portfolio performance.
+
+    Args:
+        portfolio (pd.DataFrame): The portfolio DataFrame.
+        filename (str): The filename to save the plot.
     """
+
+    # Aggregate total returns and percantage returns for each ticker
+    aggregated_portfolio = portfolio.groupby('ticker').agg(
+        {
+            'quantity': 'sum',
+            'total return': 'sum'
+        }
+    ).reset_index()
+
+    # Append the total row to the aggregated portfolio
+    total_row = pd.DataFrame({
+        'ticker': ['total'],
+        'quantity': [portfolio['quantity'].sum()],
+        'total return': [portfolio['total return'].sum()]
+    })
+    aggregated_portfolio = pd.concat([aggregated_portfolio, total_row], ignore_index=True)
+
+    # Plotting
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
-    # Exclude the 'Total' row for individual stock bars, but include for total portfolio bar
-    individual_stocks = portfolio[portfolio['ticker'] != 'total']
-    total_portfolio = portfolio[portfolio['ticker'] == 'total']
-
-    axs[0].bar(individual_stocks['ticker'], individual_stocks['total return'], color='skyblue',
-               label='Individual Stocks')
-    axs[0].bar(total_portfolio['ticker'], total_portfolio['total return'], color='navy', label='Portfolio Total')
+    # Absolute total return plot
+    axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
+    axs[0].bar(['total'], [aggregated_portfolio['total return'].sum()], color='navy', label='Portfolio Total')
     axs[0].set_title('Absolute Total Return (Including Dividends)')
     axs[0].set_ylabel('Total Return ($)')
     axs[0].legend()
 
-    axs[1].bar(individual_stocks['ticker'], individual_stocks['percentage return'], color='lightgreen',
-               label='Individual Stocks')
-    axs[1].bar(total_portfolio['ticker'], total_portfolio['percentage return'], color='darkgreen',
-               label='Portfolio Total')
+    # Percentage return plot
+    axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
+    axs[1].bar(['total'], [aggregated_portfolio['percentage return'].mean()], color='darkgreen', label='Portfolio Total')
     axs[1].set_title('Percentage Return (Including Dividends)')
     axs[1].set_ylabel('Return (%)')
     axs[1].legend()
@@ -289,7 +311,6 @@ def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
     plt.savefig(filename)
     plt.close(fig)
     plt.show()
-
 
 def show_portfolio_as_image(portfolio, filename='portfolio_table.png'):
     """
