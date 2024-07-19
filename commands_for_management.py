@@ -315,7 +315,7 @@ def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
     # Absolute total return plot
-    bars = axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
+    # bars = axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
     axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
     axs[0].bar(['total'], [total_return], color='navy', label='Portfolio Total')
     axs[0].set_title('Absolute Total Return (Including Dividends)')
@@ -328,7 +328,7 @@ def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
     #     axs[0].text(bar.get_x() + bar.get_width() / 2, yval, round(yval, 2), ha='center', va='bottom')
 
     # Percentage return plot
-    bars = axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
+    # bars = axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
     axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
     axs[1].bar(['total'], [total_percentage_return], color='darkgreen', label='Portfolio Total')
     axs[1].set_title('Percentage Return (Including Dividends)')
