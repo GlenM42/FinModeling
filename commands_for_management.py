@@ -295,6 +295,8 @@ def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
     total_dividends = portfolio['dividends'].sum()
     total_percentage_return = ((total_return + total_dividends) / total_investment_value) * 100 if total_investment_value != 0 else 0
 
+    portfolio = portfolio[portfolio['ticker'] != 'total']
+
     # Append the total row to the aggregated portfolio
     total_row = pd.DataFrame({
         'ticker': ['total'],
@@ -316,28 +318,33 @@ def plot_portfolio_performance(portfolio, filename='portfolio_performance.png'):
 
     # Absolute total return plot
     bars = axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
-    axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
-    axs[0].bar(['total'], [total_return], color='navy', label='Portfolio Total')
+    total_bar = axs[0].bar(['total'], [total_return/2], color='steelblue', label='Portfolio Total')
+    # axs[0].bar(aggregated_portfolio['ticker'], aggregated_portfolio['total return'], color='skyblue', label='Individual Stocks')
+    # axs[0].bar(['total'], [total_return], color='navy', label='Portfolio Total')
     axs[0].set_title('Absolute Total Return (Including Dividends)')
     axs[0].set_ylabel('Total Return ($)')
     axs[0].legend()
 
     # Add numeric labels on top of the bars
-    # for bar in bars:
-    #     yval = bar.get_height()
-    #     axs[0].text(bar.get_x() + bar.get_width() / 2, yval, round(yval, 2), ha='center', va='bottom')
+    for bar in bars:
+        yval = bar.get_height()
+        axs[0].text(bar.get_x() + bar.get_width() / 2, yval, f'${round(yval, 2)}', ha='center', va='bottom')
+
+    for bar in total_bar:
+        yval = bar.get_height()
+        axs[0].text(bar.get_x() + bar.get_width() / 2, yval, f'${round(yval, 2)}', ha='center', va='bottom')
 
     # Percentage return plot
     bars = axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
-    axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
+    # axs[1].bar(aggregated_portfolio['ticker'], aggregated_portfolio['percentage return'], color='lightgreen', label='Individual Stocks')
     axs[1].bar(['total'], [total_percentage_return], color='darkgreen', label='Portfolio Total')
     axs[1].set_title('Percentage Return (Including Dividends)')
     axs[1].set_ylabel('Return (%)')
     axs[1].legend()
 
-    # for bar in bars:
-    #     yval = bar.get_height()
-    #     axs[1].text(bar.get_x() + bar.get_width() / 2, yval, round(yval, 2), ha='center', va='bottom')
+    for bar in bars:
+        yval = bar.get_height()
+        axs[1].text(bar.get_x() + bar.get_width() / 2, yval, f'{round(yval, 2)}%', ha='center', va='bottom')
 
     plt.tight_layout()
     plt.savefig(filename)
