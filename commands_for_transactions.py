@@ -88,13 +88,16 @@ async def confirm_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     quantity = update.message.text
-    # Simple validation to check if quantity is a number
-    if not quantity.isdigit():
+    # Simple validation to check if quantity is a float number
+    try:
+        float_quantity = float(quantity)
+    except ValueError:
         await update.message.reply_text("Please enter a valid number for the quantity.")
         return QUANTITY
-    context.user_data['quantity'] = int(quantity)
+    context.user_data['quantity'] = float_quantity
     await update.message.reply_text(
-        f"Great. We're talking about {quantity} securities of {context.user_data['ticker']}. Can you tell me when did you bought it in a format YYYY-MM-DD?")
+        f"Great. We're talking about {float_quantity} securities of {context.user_data['ticker']}. Can you tell me "
+        f"when did you bought it in a format YYYY-MM-DD?")
     return PURCHASE_DATE
 
 
