@@ -1,0 +1,66 @@
+name: Build and Deploy
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    name: Create Artifacts
+    runs-on: [self-hosted, k3s]
+    outputs:
+      image_tag: ${{ steps.generate.outputs.image_tag }}
+    steps:
+      - name: Generate date/branch tag
+        id: generate
+        shell: bash
+        run: |
+          RAW_BRANCH="${GITHUB_REF##*/}"
+          BRANCH=$(echo "$RAW_BRANCH" | tr '[:upper:]' '[:lower:]' \
+                   | tr -c 'a-z0-9' '-' | sed 's/--*/-/g;s/^-//;s/-$//')
+          DATE=$(date +%F-%H%M)
+          TAG="${DATE}--${BRANCH}"
+
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Generated tag: $TAG"
+
+  build:
+    name: Build and Push Image
+    runs-on: [self-hosted, k3s]
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: ${{ secrets.REGISTRY_URL }}/finmodeling:${{ needs.prepare.outputs.image_tag }}
+          push: true
+          builder: ${{ steps.buildx.outputs.name }}
+
+  deploy:
+    name: Deploy to k3s
+    runs-on: [self-hosted, k3s]
+    needs: [prepare, build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy image to cluster
+        env:
+          IMAGE: ${{ secrets.REGISTRY_URL }}/finmodeling:${{ needs.prepare.outputs.image_tag }}
+        run: |
+          kubectl set image deployment/finmodeling-app \
+            finmodeling-container="$IMAGE"
+          kubectl rollout status deployment/finmodeling-app
