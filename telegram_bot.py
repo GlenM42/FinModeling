@@ -7,19 +7,14 @@ from telegram.ext import Application, CommandHandler, MessageHandler, Conversati
 
 from commands_for_calendar import find_next_first_friday
 from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, \
-    plot_portfolio_performance, fetch_option_data_and_show_returns, find_current_price, find_previous_price
-from commands_for_options import add_option_start, option_ticker_received, option_quantity_received, \
-    option_purchase_price_received, option_purchase_date_received, option_final_confirmation, remove_option_start, \
-    option_remove_ticker_received, option_remove_purchase_date_received, option_remove_final_confirmation
-from commands_for_transactions import add_transaction_start, ticker_received, confirm_ticker, quantity_received, \
+    plot_portfolio_performance, find_current_price, find_previous_price
+from commands_for_transactions import add_transaction_start, ticker_received, quantity_received, \
     purchase_date_received, purchase_price_received, final_confirmation, remove_transaction_start, \
     remove_ticker_received, remove_date_received, remove_confirmation
 
 # Define states
 TICKER, CONFIRM_TICKER, QUANTITY, PURCHASE_DATE, PURCHASE_PRICE, CONFIRMATION = range(6)
 REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
-(OPTION_TICKER, OPTION_QUANTITY, OPTION_PURCHASE_DATE, OPTION_PURCHASE_PRICE, OPTION_CONFIRMATION) = range(5)
-(OPTION_REMOVE_TICKER, OPTION_REMOVE_PURCHASE_DATE, OPTION_REMOVE_CONFIRMATION) = range(2, 5)
 
 load_dotenv()
 ADMIN_USER_IDS = [
@@ -103,22 +98,6 @@ async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Failed to retrieve price data for VOO.")
 
 
-async def show_option_returns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Fetching option data and generating returns... Please wait.")
-
-    # Assuming fetch_option_data_and_show_returns is modified to return file paths of the generated images
-    table_image_path, returns_image_path = await asyncio.to_thread(fetch_option_data_and_show_returns)
-
-    # Send the generated images
-    with open(table_image_path, 'rb') as table_image, open(returns_image_path, 'rb') as returns_image:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=table_image)
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=returns_image)
-
-    # Cleanup: Delete the images after sending
-    os.remove(table_image_path)
-    os.remove(returns_image_path)
-
-
 async def abort_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Operation aborted. If you need help or wish to perform "
                                     "another operation, just let me know.")
@@ -132,7 +111,6 @@ def main():
         entry_points=[CommandHandler('add_transaction', add_transaction_start)],
         states={
             TICKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ticker_received)],
-            CONFIRM_TICKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_ticker)],
             QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_received)],
             PURCHASE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, purchase_date_received)],
             PURCHASE_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, purchase_price_received)],
@@ -153,39 +131,12 @@ def main():
         fallbacks=[CommandHandler('abort', abort_conversation)],
     )
 
-    add_option_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('add_option', add_option_start)],
-        states={
-            OPTION_TICKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_ticker_received)],
-            OPTION_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_quantity_received)],
-            OPTION_PURCHASE_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_purchase_price_received)],
-            OPTION_PURCHASE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_purchase_date_received)],
-            OPTION_CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_final_confirmation)]
-        },
-        fallbacks=[CommandHandler('abort', abort_conversation)]
-    )
-
-    remove_option_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('remove_option', remove_option_start)],
-        states={
-            OPTION_REMOVE_TICKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, option_remove_ticker_received)],
-            OPTION_REMOVE_PURCHASE_DATE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, option_remove_purchase_date_received)],
-            OPTION_REMOVE_CONFIRMATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, option_remove_final_confirmation)]
-        },
-        fallbacks=[CommandHandler('abort', abort_conversation)]
-    )
-
     # Add handlers to the application
     application.add_handler(add_transaction_conv_handler)
     application.add_handler(remove_transaction_conv_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("portfolio", portfolio))
-    application.add_handler(CommandHandler("show_option_returns", show_option_returns))
     application.add_handler(CommandHandler("month_summary", month_summary))
-    application.add_handler(add_option_conv_handler)
-    application.add_handler(remove_option_conv_handler)
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()

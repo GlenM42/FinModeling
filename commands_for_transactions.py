@@ -43,7 +43,7 @@ async def remove_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         purchase_date = context.user_data['remove_date']
 
         # Call the function to remove the transaction from the database
-        await asyncio.to_thread(remove_transactions, 'portfolio.db', user_id, ticker, purchase_date)
+        await asyncio.to_thread(remove_transactions, user_id, ticker, purchase_date)
 
         await update.message.reply_text("Transaction removed successfully.")
     else:
@@ -65,25 +65,8 @@ async def add_transaction_start(update: Update, context: ContextTypes.DEFAULT_TY
 async def ticker_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ticker = update.message.text.upper()  # Convert ticker to uppercase
     context.user_data['ticker'] = ticker  # Store ticker in user_data
-
-    # Fetch ticker description (Placeholder function)
-    description = "This is a placeholder description for " + ticker
-    await update.message.reply_text(
-        f"Oh great. I have found the ticker. Here is a brief description: {description}. Is this the security you're "
-        f"interested in? (Reply with 'proceed' to continue or 'abort' to stop)")
-
-    return CONFIRM_TICKER
-
-
-async def confirm_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    response = update.message.text.lower()
-    if response == 'proceed':
-        await update.message.reply_text(
-            f"Great. Now how many securities of {context.user_data['ticker']} have you bought?")
-        return QUANTITY
-    else:
-        await update.message.reply_text("Transaction aborted.")
-        return ConversationHandler.END
+    await update.message.reply_text(f"Great. How many shares of {ticker} have you bought?")
+    return QUANTITY
 
 
 async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -138,7 +121,7 @@ async def final_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE)
         purchase_price = context.user_data['purchase_price']
 
         # Insert transaction into the database (ensure add_transaction is async or wrapped with asyncio.to_thread)
-        await asyncio.to_thread(add_transaction, 'portfolio.db', user_id, ticker, quantity, purchase_price,
+        await asyncio.to_thread(add_transaction, user_id, ticker, quantity, purchase_price,
                                 purchase_date)
 
         await update.message.reply_text("Transaction recorded successfully.")
