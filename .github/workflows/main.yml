@@ -51,30 +51,29 @@ jobs:
           push: true
           builder: ${{ steps.buildx.outputs.name }}
 
-  deploy:
+  deploy:  
     name: Deploy with Docker Compose
     runs-on: [self-hosted]
     needs: [prepare, build]
     if: github.ref == 'refs/heads/main'
+    env:
+      IMAGE_TAG: ${{ needs.prepare.outputs.image_tag }}
+      REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
     steps:
       - uses: actions/checkout@v4
-
+  
       - name: Log in to Docker registry
-        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.REGISTRY_URL }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
-
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "$REGISTRY_URL" -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+  
       - name: Pull new image
-        run: |
-          IMAGE_TAG=${{ needs.prepare.outputs.image_tag }}
-          docker pull ${{ secrets.REGISTRY_URL }}/finmodeling:$IMAGE_TAG
-
+        run: docker pull "$REGISTRY_URL/finmodeling:$IMAGE_TAG"
+  
       - name: Update Docker Compose and Restart Container
         run: |
-          IMAGE_TAG=${{ needs.prepare.outputs.image_tag }}
-          export IMAGE_TAG=$IMAGE_TAG
           echo "IMAGE_TAG=$IMAGE_TAG" > .env
-          echo "REGISTRY_URL=${{ secrets.REGISTRY_URL }}" >> .env
+          echo "REGISTRY_URL=$REGISTRY_URL" >> .env
           docker-compose down
           docker-compose up -d
-
+  
       - name: Cleanup unused images
         run: docker image prune -f
