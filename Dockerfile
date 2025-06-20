@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Copy & install dependencies first (so you cache layers)
 COPY requirements.txt .
-RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=120 --retries=5 -r requirements.txt --progress-bar off -v
 
 # Copy the rest of your code
 COPY . .
