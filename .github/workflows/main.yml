@@ -9,7 +9,7 @@ on:
 jobs:
   prepare:
     name: Create Artifacts
-    runs-on: [self-hosted, k3s]
+    runs-on: [self-hosted]
     outputs:
       image_tag: ${{ steps.generate.outputs.image_tag }}
     steps:
@@ -28,7 +28,7 @@ jobs:
 
   build:
     name: Build and Push Image
-    runs-on: [self-hosted, k3s]
+    runs-on: [self-hosted]
     needs: prepare
     steps:
       - uses: actions/checkout@v4
@@ -52,15 +52,29 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
 
   deploy:
-    name: Deploy to k3s
-    runs-on: [self-hosted, k3s]
+    name: Deploy with Docker Compose
+    runs-on: [self-hosted]
     needs: [prepare, build]
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Deploy image to cluster
-        env:
-          IMAGE: ${{ secrets.REGISTRY_URL }}/finmodeling:${{ needs.prepare.outputs.image_tag }}
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.REGISTRY_URL }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+
+      - name: Pull new image
         run: |
-          kubectl set image deployment/finmodeling-app \
-            finmodeling-container="$IMAGE"
-          kubectl rollout status deployment/finmodeling-app
+          IMAGE_TAG=${{ needs.prepare.outputs.image_tag }}
+          docker pull ${{ secrets.REGISTRY_URL }}/finmodeling:$IMAGE_TAG
+
+      - name: Update Docker Compose and Restart Container
+        run: |
+          IMAGE_TAG=${{ needs.prepare.outputs.image_tag }}
+          export IMAGE_TAG=$IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" > .env
+          echo "REGISTRY_URL=${{ secrets.REGISTRY_URL }}" >> .env
+          docker-compose down
+          docker-compose up -d
+
+      - name: Cleanup unused images
+        run: docker image prune -f
