@@ -7,7 +7,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, Conversati
 
 from commands_for_calendar import find_next_first_friday
 from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, \
-    plot_portfolio_performance, find_current_price, find_previous_price
+    plot_portfolio_performance, find_current_price, find_previous_price, compute_portfolio_history, \
+    plot_portfolio_history_total, plot_portfolio_history_by_ticker, build_purchase_events, \
+    plot_prices_with_purchase_markers
 from commands_for_transactions import add_transaction_start, ticker_received, quantity_received, \
     purchase_date_received, purchase_price_received, final_confirmation, remove_transaction_start, \
     remove_ticker_received, remove_date_received, remove_confirmation
@@ -97,6 +99,80 @@ async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await update.message.reply_text("Failed to retrieve price data for VOO.")
 
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_USER_IDS:
+        await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       text=f"You are not authorized to view the portfolio history. Contact "
+                                            f"admin in case you needed to be added (your user ID is: {user_id})")
+        return
+
+    try:
+        portfolio_df = await asyncio.to_thread(initialize_portfolio)
+
+        prices_df, holdings_df, total_value = await asyncio.to_thread(
+            compute_portfolio_history,
+            portfolio_df,
+        )
+
+        events_by_date, events_per_ticker = build_purchase_events(portfolio_df, prices_df.index)
+
+        # Generate and save plots
+        await asyncio.to_thread(
+            plot_portfolio_history_total,
+            total_value,
+            'portfolio_history_total.png',
+            events_by_date=events_by_date
+        )
+        await asyncio.to_thread(
+            plot_portfolio_history_by_ticker,
+            holdings_df,
+            prices_df,
+            'portfolio_history_by_ticker.png',
+            events_per_ticker=events_per_ticker
+        )
+
+        await asyncio.to_thread(
+            plot_prices_with_purchase_markers,
+            prices_df,
+            events_per_ticker,
+            'portfolio_prices_with_buys.png',
+            normalize=False  # raw dollar prices
+        )
+
+        await asyncio.to_thread(
+            plot_prices_with_purchase_markers,
+            prices_df,
+            events_per_ticker,
+            'portfolio_prices_with_buys2.png',
+            normalize=True  # percentage rises
+        )
+
+        # Send the images
+        with open('portfolio_history_total.png', 'rb') as f1:
+            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f1)
+        with open('portfolio_history_by_ticker.png', 'rb') as f2:
+            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f2)
+        with open('portfolio_prices_with_buys.png', 'rb') as f3:
+            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f3)
+        with open('portfolio_prices_with_buys2.png', 'rb') as f4:
+            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f4)
+
+    except Exception as e:
+        await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       text=f"Failed to build history: {e}")
+    finally:
+        # Clean up generated images if they exist
+        for path in ['portfolio_history_total.png', 'portfolio_history_by_ticker.png',
+                     'portfolio_prices_with_buys.png', 'portfolio_prices_with_buys2.png']:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                await context.bot.send_message(chat_id=update.effective_chat.id,
+                                               text=f"Failed to remove images: {e}")
+
 
 async def abort_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Operation aborted. If you need help or wish to perform "
@@ -137,6 +213,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("portfolio", portfolio))
     application.add_handler(CommandHandler("month_summary", month_summary))
+    application.add_handler(CommandHandler("history", history))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
