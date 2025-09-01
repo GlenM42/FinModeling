@@ -1,5 +1,7 @@
 from datetime import datetime
+from typing import Tuple
 
+import numpy as np
 from requests import HTTPError
 from retry import retry
 
@@ -206,6 +208,267 @@ def show_portfolio_as_image(portfolio, filename='portfolio_table.png'):
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1.2, 1.2)
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close(fig)
+
+def compute_portfolio_history(
+    portfolio: pd.DataFrame,
+    start_buffer_days: int = 5
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+    """
+    Build daily time series of (1) adjusted prices per ticker (AdjClose-equivalent via auto_adjust),
+    (2) shares held per ticker, and (3) total portfolio value across time.
+
+    Returns (prices_df, holdings_df, total_value_series)
+    - prices_df: index=dates, columns=tickers, values=Close (auto-adjusted)
+    - holdings_df: index=dates, columns=tickers, values=shares held that day
+    - total_value_series: index=dates, values=sum(holdings * prices)
+    """
+    if portfolio.empty:
+        raise ValueError("Portfolio transactions are empty.")
+
+    df = portfolio.copy()
+    df['purchase_date'] = pd.to_datetime(df['purchase_date']).dt.tz_localize(None)
+    df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0.0)
+
+    # Price window: a small buffer before earliest purchase up to tomorrow (exclusive)
+    earliest = df['purchase_date'].min()
+    start = (earliest - pd.Timedelta(days=start_buffer_days)).date()
+    end = (pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(days=1)).date()
+
+    tickers = sorted(df['ticker'].unique())
+
+    # Download auto-adjusted prices and get a flat "Close" table with tickers as columns
+    raw = yf.download(
+        tickers=tickers,
+        start=start,
+        end=end,
+        auto_adjust=True,       # yields adj-close-equivalent in "Close"
+        progress=False,
+        group_by='column'       # columns like: ('Close', 'AAPL', 'MSFT', ...)
+    )
+
+    # Handle single- vs multi-ticker shapes
+    if isinstance(raw.columns, pd.MultiIndex):
+        # Multi: select the 'Close' slice → columns are tickers
+        prices_df = raw['Close'].copy()
+    else:
+        # Single: keep the single 'Close' column and rename to the ticker
+        if 'Close' not in raw.columns:
+            raise ValueError("Expected 'Close' column in downloaded data.")
+        prices_df = raw[['Close']].copy()
+        prices_df.columns = [tickers[0]]
+
+    # Sort, drop all-NaN rows just in case
+    prices_df = prices_df.sort_index().dropna(how='all')
+
+    # Make sure the columns cover exactly our tickers (in case of delistings / typos)
+    have = {c.upper(): c for c in prices_df.columns}
+    keep_cols = [have[t.upper()] for t in tickers if t.upper() in have]
+    if not keep_cols:
+        raise ValueError("No price columns matched the requested tickers.")
+    prices_df = prices_df[keep_cols]
+
+    # Build holdings matrix on trading days in prices_df
+    holdings_df = pd.DataFrame(0.0, index=prices_df.index, columns=prices_df.columns)
+
+    # Apply each transaction from its first trading day onward
+    for _, r in df.iterrows():
+        t = r['ticker']
+        if t not in holdings_df.columns:
+            # Skip transactions for tickers with no price history returned
+            continue
+        q = float(r['quantity'])
+        d = r['purchase_date']
+        idx_pos = prices_df.index.searchsorted(pd.Timestamp(d), side='left')
+        if idx_pos < len(prices_df.index):
+            holdings_df.loc[holdings_df.index[idx_pos]:, t] += q
+
+    # Per-ticker values and total equity curve
+    per_ticker_values = holdings_df * prices_df
+    total_value = per_ticker_values.sum(axis=1)
+
+    return prices_df, holdings_df, total_value
+
+def build_purchase_events(
+    portfolio: pd.DataFrame,
+    prices_index: pd.DatetimeIndex
+):
+    """
+    Returns:
+      events_by_date: dict[pd.Timestamp -> str]  # labels joined by comma for total plot
+      events_per_ticker: dict[str -> list[pd.Timestamp]]  # for per-ticker markers
+    """
+    df = portfolio.copy()
+    df['purchase_date'] = pd.to_datetime(df['purchase_date']).dt.tz_localize(None)
+
+    # Map each transaction to the first trading date in prices_index (next/eq day)
+    trading_dates = prices_index
+    events_by_date = {}
+    events_per_ticker = {}
+
+    for _, r in df.iterrows():
+        tkr = str(r['ticker'])
+        d = r['purchase_date']
+        pos = trading_dates.searchsorted(pd.Timestamp(d), side='left')
+        if pos >= len(trading_dates):
+            continue  # purchase after last known price (unlikely); skip
+        trade_day = trading_dates[pos]
+
+        # total-plot labels (join tickers that share the same day)
+        if trade_day not in events_by_date:
+            events_by_date[trade_day] = tkr
+        else:
+            # avoid duplicate names on same day for same ticker
+            labels = set(map(str.strip, events_by_date[trade_day].split(',')))
+            labels.add(tkr)
+            events_by_date[trade_day] = ", ".join(sorted(labels))
+
+        # per-ticker markers
+        events_per_ticker.setdefault(tkr, []).append(trade_day)
+
+    return events_by_date, events_per_ticker
+
+def plot_portfolio_history_total(
+    total_value: pd.Series,
+    filename: str = 'portfolio_history_total.png',
+    events_by_date: dict | None = None
+) -> None:
+    """
+    Plot total portfolio value through time. Optionally draw vertical lines at purchase dates
+    with ticker labels at the top.
+    """
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(total_value.index, total_value.values, label='Portfolio Value')
+    ax.set_title('Portfolio Value Over Time', pad=30)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Value ($)')
+    ax.legend()
+
+    if events_by_date:
+        ymin, ymax = ax.get_ylim()
+        y_text = ymax  # annotate at the top
+        for dt, label in sorted(events_by_date.items()):
+            ax.axvline(dt, linestyle='--', linewidth=1, alpha=0.5)
+            # place a small label at the top; slight vertical offset in axes coords
+            ax.annotate(
+                label,
+                xy=(dt, y_text),
+                xycoords=('data', 'data'),
+                xytext=(0, 5),
+                textcoords='offset points',
+                ha='center', va='bottom', fontsize=8, rotation=90
+            )
+
+    plt.tight_layout()
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close(fig)
+
+def plot_portfolio_history_by_ticker(
+    holdings_df: pd.DataFrame,
+    prices_df: pd.DataFrame,
+    filename: str = 'portfolio_history_by_ticker.png',
+    events_per_ticker: dict | None = None
+) -> None:
+    """
+    Plot each ticker's contribution to portfolio value as lines.
+    Optionally mark purchase dates with points and small labels.
+    """
+    per_ticker_values = holdings_df * prices_df
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for col in per_ticker_values.columns:
+        series = per_ticker_values[col]
+        ax.plot(series.index, series.values, label=col)
+
+        if events_per_ticker and col in events_per_ticker:
+            event_dates = events_per_ticker[col]
+            # Find the y values at those dates (align on index)
+            valid_dates = [d for d in event_dates if d in series.index]
+            if valid_dates:
+                yvals = series.loc[valid_dates].values
+                ax.scatter(valid_dates, yvals, s=18, zorder=5)
+                # Tiny labels just above each dot
+                for x, y in zip(valid_dates, yvals):
+                    ax.annotate(col, xy=(x, y), xytext=(0, 6),
+                                textcoords='offset points', ha='center', va='bottom', fontsize=7, rotation=0)
+
+    ax.set_title('Per-Ticker Position Value Over Time')
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Value ($)')
+    ax.legend(ncols=2, fontsize=9)
+    plt.tight_layout()
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close(fig)
+
+def plot_prices_with_purchase_markers(
+    prices_df: pd.DataFrame,
+    events_per_ticker: dict[str, list[pd.Timestamp]] | None = None,
+    filename: str = 'portfolio_prices_with_buys.png',
+    normalize: bool = False,
+    min_label_gap_days: int = 14,
+    trim_pre_purchase: bool = True,   # hide days before first buy when normalize=True
+) -> None:
+    """
+    Plot adjusted prices for all tickers (no quantity effect) and mark buy dates.
+    If normalize=True, each ticker is rebased to 100 at its FIRST BUY date (per-ticker).
+    """
+    P = prices_df.copy()
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for col in P.columns:
+        s = P[col].dropna()
+        if s.empty:
+            continue
+
+        # --- per-ticker normalization at first buy date ---
+        if normalize:
+            # pick the first buy date that exists in the price index; else fall back to first valid date
+            anchor = None
+            if events_per_ticker and col in events_per_ticker:
+                aligned = [d for d in events_per_ticker[col] if d in s.index]
+                if aligned:
+                    anchor = min(aligned)
+            if anchor is None:
+                anchor = s.index[0]
+
+            base = s.loc[anchor]
+            if pd.isna(base) or base == 0:
+                # Safety fallback
+                base = s.dropna().iloc[0]
+
+            s_norm = (s / float(base)) * 100.0
+
+            if trim_pre_purchase and events_per_ticker and col in events_per_ticker:
+                # hide dates before first buy so the line starts at the purchase
+                s_norm = s_norm.where(s.index >= anchor)
+
+            plot_series = s_norm
+        else:
+            plot_series = s
+
+        ax.plot(plot_series.index, plot_series.values, label=col)
+
+        if events_per_ticker and col in events_per_ticker:
+            ev_dates = [d for d in events_per_ticker[col] if d in plot_series.index]
+            if ev_dates:
+                yvals = plot_series.loc[ev_dates].values
+                ax.scatter(ev_dates, yvals, s=18, zorder=5)
+
+                last_label_dt = None
+                for x, y in zip(ev_dates, yvals):
+                    if np.isnan(y):
+                        continue
+                    if last_label_dt is None or (x - last_label_dt).days >= min_label_gap_days:
+                        ax.annotate(col, xy=(x, y), xytext=(0, 6),
+                                    textcoords='offset points', ha='center', va='bottom', fontsize=7)
+                        last_label_dt = x
+
+    ax.set_title('Price History With Buy Markers' + (' — Rebased to First Buy (100)' if normalize else ''))
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Index (100 at first buy)' if normalize else 'Price ($)')
+    ax.legend(ncols=2, fontsize=9)
+    plt.tight_layout()
     plt.savefig(filename, bbox_inches='tight')
     plt.close(fig)
 
