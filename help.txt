@@ -1,5 +1,0 @@
-# To create a docker image
-```
-docker buildx build --platform linux/amd64 -t fs.panga-ghost.ts.net:5443/tgbot:0.7 --push .
-```
-Increment tag version each time
