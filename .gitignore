@@ -3,15 +3,8 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-.env
-.env
-venv
 .venv
 .env
-env.bak
-venv.bak
-.python-version
-portfolio.db
 reports
-docker-compose.yml
 .idea
+.DS_Store
