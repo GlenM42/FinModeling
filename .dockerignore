@@ -5,10 +5,6 @@ __pycache__/
 .Python
 .env
 .idea
-venv
 .venv
-env.bak
-venv.bak
-.python-version
 reports
-help.txt
+.DS_Store
