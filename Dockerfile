@@ -3,18 +3,25 @@ FROM python:3.12-slim
 # Set up a working directory
 WORKDIR /app
 
-# Copy & install dependencies first
-COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=120 --retries=5 -r requirements.txt --progress-bar off -v
+# Install uv into the image
+RUN pip install --no-cache-dir uv
+
+# Copy only dependency first
+COPY pyproject.toml uv.lock ./
+
+# Create venv and install base and bot deps
+RUN uv venv /app/.venv \
+ && uv sync --group bot --frozen --no-dev
 
 # Copy the rest of the code
 COPY . .
 
-# A non-root user:
-RUN adduser --system --group bot \
-  && chown -R bot:bot /app
-
+# now drop privileges
+RUN useradd -ms /bin/bash bot
 USER bot
+
+# Ensure the venv is used
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Run the bot
 CMD ["python", "./telegram_bot.py"]
