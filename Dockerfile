@@ -16,10 +16,6 @@ RUN uv venv /app/.venv \
 # Copy the rest of the code
 COPY . .
 
-# now drop privileges
-RUN useradd -ms /bin/bash bot
-USER bot
-
 # Ensure the venv is used
 ENV PATH="/app/.venv/bin:$PATH"
 
