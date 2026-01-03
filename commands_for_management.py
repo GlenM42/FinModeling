@@ -199,15 +199,21 @@ def show_portfolio_as_image(portfolio, filename='portfolio_table.png'):
     """
     Generates an image representation of the portfolio DataFrame with adjustments for 'Total' row.
     """
-    fig, ax = plt.subplots(figsize=(12, (len(portfolio) + 1) * 0.65))
+    table_data = portfolio.round(2).fillna("N/A")
+
+    fig_w = len(table_data.columns)
+
+    fig, ax = plt.subplots(figsize=(fig_w, 1))
     ax.axis('tight')
     ax.axis('off')
-    table_data = portfolio.round(2).fillna("N/A")
-    table = ax.table(cellText=table_data.values, colLabels=table_data.columns, loc='center', cellLoc='center',
+    table = ax.table(cellText=table_data.values,
+                     colLabels=table_data.columns,
+                     loc='center',
+                     cellLoc='center',
                      colLoc='center')
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.2, 1.2)
+    table.set_fontsize(9)
+    table.auto_set_column_width(col=list(range(len(table_data.columns))))
     plt.savefig(filename, bbox_inches='tight')
     plt.close(fig)
 
