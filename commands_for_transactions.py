@@ -3,10 +3,11 @@ import asyncio
 from telegram import Update
 from telegram.ext import ConversationHandler, ContextTypes
 
-from commands_for_database import remove_transactions, add_transaction
+from commands_for_database import remove_transactions, add_transaction, bank_get_balance, bank_deduct
 
 TICKER, CONFIRM_TICKER, QUANTITY, PURCHASE_DATE, PURCHASE_PRICE, CONFIRMATION = range(6)
 REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
+BANK_DEDUCT = 9
 (OPTION_TICKER, OPTION_QUANTITY, OPTION_PURCHASE_DATE, OPTION_PURCHASE_PRICE, OPTION_CONFIRMATION) = range(5)
 (OPTION_REMOVE_TICKER, OPTION_REMOVE_PURCHASE_DATE, OPTION_REMOVE_CONFIRMATION) = range(2, 5)
 
@@ -57,78 +58,102 @@ async def remove_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def add_transaction_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Let's add the new transaction. Before we do that, I would like you "
-                                    "to tell me the following information. First, tell me the ticker we're buying.")
+    await update.message.reply_text("Which ticker are you buying?")
     return TICKER
 
 
 async def ticker_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    ticker = update.message.text.upper()  # Convert ticker to uppercase
-    context.user_data['ticker'] = ticker  # Store ticker in user_data
-    await update.message.reply_text(f"Great. How many shares of {ticker} have you bought?")
+    ticker = update.message.text.upper()
+    context.user_data['ticker'] = ticker
+    await update.message.reply_text(f"How many shares of {ticker}?")
     return QUANTITY
 
 
 async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    quantity = update.message.text
-    # Simple validation to check if quantity is a float number
     try:
-        float_quantity = float(quantity)
+        float_quantity = float(update.message.text)
     except ValueError:
-        await update.message.reply_text("Please enter a valid number for the quantity.")
+        await update.message.reply_text("Please enter a valid number.")
         return QUANTITY
     context.user_data['quantity'] = float_quantity
     await update.message.reply_text(
-        f"Great. We're talking about {float_quantity} securities of {context.user_data['ticker']}. Can you tell me "
-        f"when did you bought it in a format YYYY-MM-DD?")
+        f"{float_quantity} shares of {context.user_data['ticker']} — what was the purchase date? (YYYY-MM-DD)"
+    )
     return PURCHASE_DATE
 
 
 async def purchase_date_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    purchase_date = update.message.text
-    # Here you might want to add more sophisticated date validation
-    context.user_data['purchase_date'] = purchase_date
-    await update.message.reply_text(f"Wonderful. Can you tell me what was the price back then?")
+    context.user_data['purchase_date'] = update.message.text
+    await update.message.reply_text("Price per share?")
     return PURCHASE_PRICE
 
 
 async def purchase_price_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    purchase_price = update.message.text
-    # Simple validation to check if price is a float number
     try:
-        float_price = float(purchase_price)
+        float_price = float(update.message.text)
     except ValueError:
-        await update.message.reply_text("Please enter a valid number for the price.")
+        await update.message.reply_text("Please enter a valid number.")
         return PURCHASE_PRICE
     context.user_data['purchase_price'] = float_price
-    await update.message.reply_text(f"Boss, I believe the transaction to be the following:"
-                                    f"\nNumber of securities: {context.user_data['quantity']}"
-                                    f"\nTicker we're buying: {context.user_data['ticker']}"
-                                    f"\nPurchase date: {context.user_data['purchase_date']}"
-                                    f"\nPurchase price: ${context.user_data['purchase_price']}."
-                                    f"\nIf everything is correct, I will put it down. Shall I proceed?")
+
+    ticker = context.user_data['ticker']
+    quantity = context.user_data['quantity']
+    purchase_date = context.user_data['purchase_date']
+    total = round(quantity * float_price, 2)
+
+    await update.message.reply_text(
+        f"Here's the transaction:\n\n"
+        f"  {ticker} — {quantity} shares\n"
+        f"  Date: {purchase_date}\n"
+        f"  Price: ${float_price:.2f}\n"
+        f"  Total: ${total:.2f}\n\n"
+        f"Confirm? (yes/no)"
+    )
     return CONFIRMATION
 
 
 async def final_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     response = update.message.text.lower()
     if response in ['yes', 'proceed']:
-        # Extract transaction details from context.user_data
         user_id = update.effective_user.id
         ticker = context.user_data['ticker']
         quantity = context.user_data['quantity']
         purchase_date = context.user_data['purchase_date']
         purchase_price = context.user_data['purchase_price']
+        total_cost = round(quantity * purchase_price, 2)
 
-        # Insert transaction into the database (ensure add_transaction is async or wrapped with asyncio.to_thread)
-        await asyncio.to_thread(add_transaction, user_id, ticker, quantity, purchase_price,
-                                purchase_date)
+        await asyncio.to_thread(add_transaction, user_id, ticker, quantity, purchase_price, purchase_date)
 
-        await update.message.reply_text("Transaction recorded successfully.")
+        await update.message.reply_text(
+            f"Recorded. Deduct ${total_cost:.2f} from your {ticker} bank balance? (yes/no)"
+        )
+        return BANK_DEDUCT
     else:
-        await update.message.reply_text("Transaction aborted. No data recorded.")
+        await update.message.reply_text("Cancelled.")
+        context.user_data.clear()
+        return ConversationHandler.END
 
-    # Clear user_data for the current transaction
+
+async def bank_deduct_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    response = update.message.text.lower()
+    if response == 'yes':
+        user_id = update.effective_user.id
+        ticker = context.user_data['ticker']
+        quantity = context.user_data['quantity']
+        purchase_price = context.user_data['purchase_price']
+        total_cost = round(quantity * purchase_price, 2)
+
+        current_balance = await asyncio.to_thread(bank_get_balance, user_id, ticker)
+        if total_cost > current_balance:
+            await update.message.reply_text(
+                f"Note: purchase (${total_cost:.2f}) exceeds current bank balance (${current_balance:.2f}) — "
+                f"balance will go negative."
+            )
+        await asyncio.to_thread(bank_deduct, user_id, ticker, total_cost)
+        new_balance = await asyncio.to_thread(bank_get_balance, user_id, ticker)
+        await update.message.reply_text(f"{ticker} bank balance: ${new_balance:.2f}.")
+    else:
+        await update.message.reply_text("Bank unchanged.")
+
     context.user_data.clear()
-
     return ConversationHandler.END
