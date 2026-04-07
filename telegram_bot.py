@@ -6,17 +6,25 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
 from commands_for_calendar import find_next_first_friday
+from commands_for_database import create_bank_table
 from commands_for_management import initialize_portfolio, calculate_performance, show_portfolio_as_image, \
     plot_portfolio_performance, find_current_price, find_previous_price, compute_portfolio_history, \
     plot_portfolio_history_total, plot_portfolio_history_by_ticker, build_purchase_events, \
     plot_prices_with_purchase_markers
 from commands_for_transactions import add_transaction_start, ticker_received, quantity_received, \
-    purchase_date_received, purchase_price_received, final_confirmation, remove_transaction_start, \
-    remove_ticker_received, remove_date_received, remove_confirmation
+    purchase_date_received, purchase_price_received, final_confirmation, bank_deduct_response, \
+    remove_transaction_start, remove_ticker_received, remove_date_received, remove_confirmation
+from commands_for_bank import (
+    deposit_start, deposit_ticker_received, deposit_amount_received,
+    bank_show,
+    get_bank, get_purchase_suggestion,
+    DEPOSIT_TICKER, DEPOSIT_AMOUNT,
+)
 
 # Define states
 TICKER, CONFIRM_TICKER, QUANTITY, PURCHASE_DATE, PURCHASE_PRICE, CONFIRMATION = range(6)
 REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
+BANK_DEDUCT = 9
 
 load_dotenv()
 ADMIN_USER_IDS = [
@@ -70,7 +78,7 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Fetching data for VOO... Please wait.")
+    await update.message.reply_text("Fetching data... Please wait.")
 
     current_price = await asyncio.to_thread(find_current_price, "VOO")
     previous_price = await asyncio.to_thread(find_previous_price, "VOO")
@@ -78,7 +86,6 @@ async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if current_price is not None and previous_price is not None:
         percentage_change = round(((current_price - previous_price) / previous_price) * 100, 2)
 
-        # Determine the quantity to suggest
         if percentage_change > -10:
             suggestion = "to buy one"
         elif -20 < percentage_change <= -10:
@@ -98,6 +105,26 @@ async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(summary_message, parse_mode='HTML')
     else:
         await update.message.reply_text("Failed to retrieve price data for VOO.")
+
+    # Bank status for all three tickers
+    user_id = update.effective_user.id
+    bank_rows = await asyncio.to_thread(get_bank, user_id)
+    bank_map = {row[0]: float(row[1]) for row in bank_rows}
+
+    bank_lines = ["<b>Bank status:</b>"]
+    for ticker in ("VOO", "AVUV", "AVDV"):
+        balance = bank_map.get(ticker, 0.0)
+        price = await asyncio.to_thread(find_current_price, ticker)
+        if price:
+            whole_shares, remainder = get_purchase_suggestion(user_id, ticker, price)
+            bank_lines.append(
+                f"<b>{ticker}</b>: ${balance:.2f} | ${price:.2f}/share "
+                f"→ buy {whole_shares} share(s), ${remainder:.2f} remaining"
+            )
+        else:
+            bank_lines.append(f"<b>{ticker}</b>: ${balance:.2f} (price unavailable)")
+
+    await update.message.reply_text("\n".join(bank_lines), parse_mode='HTML')
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -181,6 +208,8 @@ async def abort_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def main():
+    create_bank_table()
+
     application = Application.builder().token(os.getenv('TELEGRAM_API')).build()
 
     add_transaction_conv_handler = ConversationHandler(
@@ -190,7 +219,8 @@ def main():
             QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_received)],
             PURCHASE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, purchase_date_received)],
             PURCHASE_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, purchase_price_received)],
-            CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, final_confirmation)]
+            CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, final_confirmation)],
+            BANK_DEDUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bank_deduct_response)],
         },
         fallbacks=[
             CommandHandler('abort', abort_conversation),
@@ -207,9 +237,20 @@ def main():
         fallbacks=[CommandHandler('abort', abort_conversation)],
     )
 
+    deposit_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('deposit', deposit_start)],
+        states={
+            DEPOSIT_TICKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_ticker_received)],
+            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount_received)],
+        },
+        fallbacks=[CommandHandler('abort', abort_conversation)],
+    )
+
     # Add handlers to the application
     application.add_handler(add_transaction_conv_handler)
     application.add_handler(remove_transaction_conv_handler)
+    application.add_handler(deposit_conv_handler)
+    application.add_handler(CommandHandler("bank", bank_show))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("portfolio", portfolio))
     application.add_handler(CommandHandler("month_summary", month_summary))

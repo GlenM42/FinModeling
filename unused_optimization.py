@@ -2,133 +2,96 @@ import numpy as np
 import yfinance as yf
 from scipy.optimize import minimize
 
-# Fetch historical data for the new set of assets
-symbols = ['SBUX', 'PEP', 'MCD']
-data = yf.download(symbols, start="2020-01-01", end="2024-03-25")['Adj Close']
+# Fetch historical data
+symbols = ['VOO', 'AVUV', 'AVDV']
+data = yf.download(symbols, start="2020-01-01", end="2026-03-31", auto_adjust=True)['Close']
 
-# Calculate daily returns
-daily_returns = data.pct_change()
+# --- Monthly returns (more stable for long-horizon factor portfolios) --------
+monthly_data    = data.resample("ME").last()
+monthly_returns = monthly_data.pct_change().dropna()
 
-# Calculate expected returns and covariance matrix
-annual_returns = daily_returns.mean() * 252
-cov_matrix = daily_returns.cov() * 252
+# Annualised stats from monthly returns
+annual_returns = monthly_returns.mean() * 12
+cov_matrix     = monthly_returns.cov()  * 12
 
-# Fetch current prices
-current_prices = {symbol: yf.Ticker(symbol).info.get("currentPrice") for symbol in symbols}
+print("Annualised returns:")
+print((annual_returns * 100).round(2))
+print("\nAnnualised volatilities:")
+print((np.sqrt(np.diag(cov_matrix)) * 100).round(2))
 
-total_budget = 2000  # Updated budget
+# Risk-free rate
+risk_free_rate = 0.045
 
+# Shared constraints & bounds (no shorts, weights sum to 1)
+constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+bounds      = tuple((0, 1) for _ in symbols)
+w0          = [1. / len(symbols)] * len(symbols)
+
+# =============================================================================
 print("\n======HERE=WE=DO=REGULAR=PORTFOLIO=OPTIMIZATION=======\n")
+# =============================================================================
 
+def portfolio_volatility(weights, cov_matrix):
+    return np.sqrt(weights @ cov_matrix @ weights)
 
-# Portfolio optimization function to minimize volatility
-def optimize_portfolio(returns, cov_matrix):
-    num_assets = len(returns)
-    args = (cov_matrix,)
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})  # Weights must sum to 1
-    bounds = tuple((0, 1) for asset in range(num_assets))
-    initial_guess = num_assets * [1. / num_assets, ]
+result = minimize(portfolio_volatility, w0,
+                  args=(cov_matrix,),
+                  method='SLSQP', bounds=bounds, constraints=constraints)
 
-    def portfolio_volatility(weights, cov_matrix):
-        return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+print("Optimal weights (min volatility):")
+for s, w in zip(symbols, result.x):
+    print(f"  {s}: {w*100:.1f}%")
 
-    result = minimize(portfolio_volatility, initial_guess, args=args, method='SLSQP', bounds=bounds,
-                      constraints=constraints)
-    return result.x
+# =============================================================================
+print("\n======HERE=WE=DO=PORTFOLIO=OPTIMIZATION=BY=SHARPE=RATIO======\n")
+# =============================================================================
 
+def neg_sharpe(weights, returns, cov_matrix, rf):
+    ret = weights @ returns
+    vol = np.sqrt(weights @ cov_matrix @ weights)
+    return -(ret - rf) / vol
 
-optimal_weights = optimize_portfolio(annual_returns, cov_matrix)
+result_sharpe = minimize(neg_sharpe, w0,
+                         args=(annual_returns, cov_matrix, risk_free_rate),
+                         method='SLSQP', bounds=bounds, constraints=constraints)
 
-print("Optimal weights by regular optimization:", optimal_weights)
+print("Optimal weights (max Sharpe):")
+for s, w in zip(symbols, result_sharpe.x):
+    print(f"  {s}: {w*100:.1f}%")
 
-# Calculate the dollar amount to allocate to each stock
-dollar_allocation = optimal_weights * total_budget
-
-# Calculate how many shares to buy for each stock
-shares_to_buy = {symbol: np.floor(dollar_allocation[i] / current_prices[symbol]) for i, symbol in enumerate(symbols)}
-
-print("Shares to buy:", shares_to_buy)
-
-print("\n======HERE=WE=DO==PORTFOLIO=OPTIMIZATION=BY=SHARPE=RATIO======\n")
-
-# Risk-free rate (assuming a typical value; adjust based on current data)
-risk_free_rate = 0.0522
-
-
-# Function to calculate the Sharpe Ratio for a portfolio
-def sharpe_ratio(weights, returns, cov_matrix, risk_free_rate):
-    portfolio_return = np.dot(weights, returns) - risk_free_rate
-    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-    return portfolio_return / portfolio_volatility
-
-
-# Objective function to maximize (negative Sharpe Ratio for minimization function)
-def neg_sharpe_ratio(weights, returns, cov_matrix, risk_free_rate):
-    return -sharpe_ratio(weights, returns, cov_matrix, risk_free_rate)
-
-
-# Constraints and bounds
-constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-bounds = tuple((0, 1) for asset in symbols)
-initial_guess = [1. / len(symbols)] * len(symbols)
-
-# Portfolio optimization to maximize the Sharpe Ratio
-opt_result = minimize(neg_sharpe_ratio, initial_guess, args=(annual_returns, cov_matrix, risk_free_rate),
-                      method='SLSQP', bounds=bounds, constraints=constraints)
-
-optimal_weights = opt_result.x
-
-print("Optimal weights judging by Sharpe Ration:", optimal_weights)
-
-# Calculate the dollar amount to allocate to each stock
-dollar_allocation = optimal_weights * total_budget
-
-# Calculate how many shares to buy for each stock
-shares_to_buy = {symbol: np.floor(dollar_allocation[i] / current_prices[symbol]) for i, symbol in enumerate(symbols)}
-
-print("Shares to buy:", shares_to_buy)
-
+# =============================================================================
 print("\n====HERE=WE=DO=PORTFOLIO=OPTIMIZATION=BY=MINIMIZING=LEFT=TAIL====\n")
+# =============================================================================
 
-# Calculate the downside volatility
+# --- Fixed semi-variance: E[min(r, 0)^2] per asset, annualised --------------
 target_return = 0.0
-downside_returns = daily_returns.copy()
-# we are setting all the returns above zero to be null
-downside_returns[downside_returns > target_return] = 0
+neg_ret       = monthly_returns.copy()
+neg_ret[neg_ret > target_return] = 0          # zero out positive months
+semi_variance = (neg_ret ** 2).mean() * 12    # annualised expected squared downside
 
-# Calculate semi-variance (only negative returns)
-semi_variance = downside_returns.var() * 252
-
-
-# Custom objective function (Maximize Returns - Penalty for Downside Risk)
-def objective(weights, returns, semi_variance):
-    portfolio_return = np.dot(weights, returns)
-    portfolio_semi_vol = np.sqrt(np.dot(weights.T, np.dot(np.diag(semi_variance), weights)))
-    penalty_factor = 5  # Adjust this to control the penalty for downside risk
+def objective_downside(weights, returns, semi_variance):
+    portfolio_return   = weights @ returns
+    # Diagonal approximation of downside covariance (standard for semi-variance)
+    portfolio_semi_vol = np.sqrt(weights @ np.diag(semi_variance) @ weights)
+    penalty_factor     = 5
     return -(portfolio_return - penalty_factor * portfolio_semi_vol)
 
+result_downside = minimize(objective_downside, w0,
+                           args=(annual_returns, semi_variance),
+                           method='SLSQP', bounds=bounds, constraints=constraints)
 
-# Constraints and bounds
-constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-bounds = tuple((0, 1) for asset in symbols)
-initial_guess = [1. / len(symbols)] * len(symbols)
+print("Optimal weights (min downside risk):")
+for s, w in zip(symbols, result_downside.x):
+    print(f"  {s}: {w*100:.1f}%")
 
-# Portfolio optimization
-opt_result = minimize(objective, initial_guess, args=(annual_returns, semi_variance),
-                      method='SLSQP', bounds=bounds, constraints=constraints)
+# =============================================================================
+print("\n====SUMMARY====\n")
+# =============================================================================
 
-optimal_weights = opt_result.x
-
-print("Optimal weights:", optimal_weights)
-
-dollar_allocation = optimal_weights * total_budget
-
-shares_to_buy = {symbol: np.floor(dollar_allocation[i] / current_prices[symbol]) for i, symbol in enumerate(symbols)}
-
-print("Shares to buy: ", shares_to_buy)
-
-# portfolio_info = {
-#     'SBUX': [6, 91.79],
-#     'PEP': [3, 174.76],
-#     'MCD': [1, 282.25]
-# }
+print(f"{'Asset':<8} {'Min Vol':>10} {'Max Sharpe':>12} {'Min Downside':>14}")
+print("-" * 48)
+for i, s in enumerate(symbols):
+    print(f"{s:<8} "
+          f"{result.x[i]*100:>9.1f}%  "
+          f"{result_sharpe.x[i]*100:>11.1f}%  "
+          f"{result_downside.x[i]*100:>13.1f}%")
