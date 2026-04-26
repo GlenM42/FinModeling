@@ -3,13 +3,11 @@ import asyncio
 from telegram import Update
 from telegram.ext import ConversationHandler, ContextTypes
 
-from commands_for_database import remove_transactions, add_transaction, bank_get_balance, bank_deduct
+from finmodeling.database import remove_transactions, add_transaction, bank_get_balance, bank_deduct
 
 TICKER, CONFIRM_TICKER, QUANTITY, PURCHASE_DATE, PURCHASE_PRICE, CONFIRMATION = range(6)
 REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
 BANK_DEDUCT = 9
-(OPTION_TICKER, OPTION_QUANTITY, OPTION_PURCHASE_DATE, OPTION_PURCHASE_PRICE, OPTION_CONFIRMATION) = range(5)
-(OPTION_REMOVE_TICKER, OPTION_REMOVE_PURCHASE_DATE, OPTION_REMOVE_CONFIRMATION) = range(2, 5)
 
 
 async def remove_transaction_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

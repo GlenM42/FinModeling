@@ -1,7 +1,7 @@
 [project]
 name = "finmodeling"
 version = "0.1.0"
-description = "Financial Modeling & Monitoring project, consisting of telegram bot for monitoring and optimization reports generaiotn"
+description = "Financial Monitoring project, based on the telegram bot"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,22 +11,10 @@ dependencies = [
     "pandas==2.2.1",
     "numpy==1.26.4",
     "scipy>=1.12.0",
-]
-
-[dependency-groups]
-bot = [
-  "python-telegram-bot==21.0.1",
-  "mysql-connector-python==9.3.0",
-  "matplotlib==3.8.3",
-  "retry>=0.9.2",
-  "seaborn>=0.13.2",
-  "sqlalchemy>=2.0.45",
-]
-
-reports = [
-    "bs4==0.0.2",
-    "financetoolkit==1.8.4",
-    "reportlab==4.1.0",
-    "pypdf2==3.0.1",
-    "scipy==1.12.0",
+    "python-telegram-bot==21.0.1",
+    "mysql-connector-python==9.3.0",
+    "matplotlib==3.8.3",
+    "retry>=0.9.2",
+    "seaborn>=0.13.2",
+    "sqlalchemy>=2.0.45",
 ]
