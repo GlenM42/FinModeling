@@ -20,9 +20,9 @@ RUN groupadd -g 1000 cthulhu && \
 # Use --chown to avoid creating duplicate layer
 COPY --chown=cthulhu:cthulhu pyproject.toml uv.lock ./
 
-# Create venv and install base and bot deps
+# Create venv and install deps
 RUN uv venv /app/.venv \
- && uv sync --group bot --frozen --no-dev
+ && uv sync --frozen --no-dev
 
 # Copy application code with proper ownership
 COPY --chown=cthulhu:cthulhu . .
