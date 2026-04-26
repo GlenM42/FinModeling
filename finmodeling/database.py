@@ -1,5 +1,14 @@
-from sqlalchemy import text
-from db import engine
+from os import getenv
+import pandas as pd
+from sqlalchemy import create_engine, text
+
+URL = (
+    f"mysql+mysqlconnector://{getenv('DB_USER')}:{getenv('DB_PASS')}@"
+    f"{getenv('DB_HOST')}:{getenv('DB_PORT', 3306)}/"
+    f"{getenv('DB_NAME')}"
+)
+
+engine = create_engine(URL, pool_pre_ping=True)
 
 
 # Bank table DDL (run once at startup via create_bank_table()):
@@ -75,7 +84,7 @@ def bank_deposit(user_id, ticker, amount):
         )
 
 
-def bank_get_balance(user_id, ticker):
+def bank_get_balance(user_id: int, ticker: str) -> float:
     """Return current balance for user+ticker, or 0.0 if no row exists."""
     with engine.begin() as conn:
         result = conn.execute(
@@ -83,17 +92,19 @@ def bank_get_balance(user_id, ticker):
             {"user_id": user_id, "ticker": ticker},
         )
         row = result.fetchone()
+        # If the user never deposited to the bank, the value of fetchone()
+        # could be None, therefore None[0] would be a Type Error.
         return float(row[0]) if row else 0.0
 
 
-def bank_get_all(user_id):
-    """Return all (ticker, balance, last_updated) rows with balance > 0 for a user."""
+def bank_get_all(user_id: int) -> list:
+    """Return all (ticker, balance, last_updated) rows for a user."""
     with engine.begin() as conn:
         result = conn.execute(
             text("""
                 SELECT ticker, balance, last_updated
                 FROM bank
-                WHERE user_id = :user_id AND balance > 0
+                WHERE user_id = :user_id
                 ORDER BY ticker
             """),
             {"user_id": user_id},
@@ -133,3 +144,29 @@ def remove_transactions(user_id, ticker, purchase_date):
                 "purchase_date": purchase_date,
             }
         )
+
+def retrieve_admins() -> list[int]:
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("""
+                SELECT user_id 
+                FROM users;
+            """)
+        )
+        rows = result.fetchall()
+    return [row[0] for row in rows]
+
+
+def initialize_portfolio() -> pd.DataFrame:
+    """
+    Initializes the portfolio DataFrame the database.
+    """
+    query = """
+    SELECT a.ticker, t.quantity, t.purchase_price, t.purchase_date
+    FROM transactions t
+    JOIN assets a ON t.asset_id = a.id
+    ORDER BY t.purchase_date
+    """
+
+    portfolio = pd.read_sql_query(query, con=engine)
+    return portfolio
