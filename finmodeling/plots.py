@@ -55,8 +55,10 @@ def plot_portfolio_performance(aggregated_performance: pd.DataFrame, filename='p
         yval = bar.get_height()
         axs[1].text(bar.get_x() + bar.get_width() / 2, yval, f'{round(yval, 2)}%', ha='center', va='bottom')
 
-    plt.tight_layout()
-    plt.savefig(filename)
+    # Must be `fig` instead of `plt` because `plt` uses the current figure,
+    # which is not thread-safe. We need to be thread-safe here to optimize `/history` command
+    fig.tight_layout()
+    fig.savefig(filename)
     plt.close(fig)
 
 
@@ -79,7 +81,7 @@ def show_portfolio_as_image(portfolio_performance, filename='portfolio_table.png
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     table.auto_set_column_width(col=list(range(len(table_data.columns))))
-    plt.savefig(filename, bbox_inches='tight')
+    fig.savefig(filename, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -128,8 +130,8 @@ def plot_portfolio_history_total(
                 ha='center', va='bottom', fontsize=8, rotation=90
             )
 
-    plt.tight_layout()
-    plt.savefig(filename, bbox_inches='tight')
+    fig.tight_layout()
+    fig.savefig(filename, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -166,8 +168,8 @@ def plot_portfolio_history_by_ticker(
     ax.set_xlabel('Date')
     ax.set_ylabel('Value ($)')
     ax.legend(ncols=2, fontsize=9)
-    plt.tight_layout()
-    plt.savefig(filename, bbox_inches='tight')
+    fig.tight_layout()
+    fig.savefig(filename, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -238,6 +240,6 @@ def plot_prices_with_purchase_markers(
     ax.set_xlabel('Date')
     ax.set_ylabel('Index (100 at first buy)' if normalize else 'Price ($)')
     ax.legend(ncols=2, fontsize=9)
-    plt.tight_layout()
-    plt.savefig(filename, bbox_inches='tight')
+    fig.tight_layout()
+    fig.savefig(filename, bbox_inches='tight')
     plt.close(fig)

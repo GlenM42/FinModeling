@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 load_dotenv() # We should import .env before the database (there is connection to db based on ENVs)
 
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
 from finmodeling.calendar import find_next_first_friday
@@ -50,23 +51,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    filenames = [f"portfolio_{uid}.png", f"portfolio_perf_{uid}.png"]
+
     portfolio_df = await asyncio.to_thread(initialize_portfolio)
-    portfolio_perf = await asyncio.to_thread(calculate_performance, portfolio_df)
+    try:
+        # We wrap with try-except because it is an external API
+        portfolio_perf = await calculate_performance(portfolio_df)
+    except RuntimeError as e:
+        logger.error(f"Error occurred while calculating portfolio performance: {e}")
+        await update.message.reply_text("Failed to calculate portfolio performance.")
+        return
+
     aggr_performance = await asyncio.to_thread(calculate_aggregate_performance, portfolio_perf)
 
-    # Use the modified functions to save images
-    await asyncio.to_thread(show_portfolio_as_image, portfolio_perf, 'portfolio_table.png')
-    await asyncio.to_thread(plot_portfolio_performance, aggr_performance, 'portfolio_performance.png')
+    try:
+        await asyncio.gather(
+            asyncio.to_thread(show_portfolio_as_image, portfolio_perf, filenames[0]),
+            asyncio.to_thread(plot_portfolio_performance, aggr_performance, filenames[1]),
+        )
 
-    # Send the images
-    with open('portfolio_table.png', 'rb') as file:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=file)
-    with open('portfolio_performance.png', 'rb') as file:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=file)
-
-    # Delete the images after sending
-    os.remove('portfolio_table.png')
-    os.remove('portfolio_performance.png')
+        for path in filenames:
+            with open(path, 'rb') as f:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+    finally:
+        for path in filenames:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 async def bank_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -78,11 +89,15 @@ async def bank_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     lines = ["<b>Bank balances:</b>\n"]
-    for ticker, balance, _ in rows:
-        try:
-            current_price = await asyncio.to_thread(find_current_price, ticker)
-        except Exception as e:
-            logger.error(f"Could not get the current price for {ticker}: {e}", exc_info=True)
+
+    # Spawning all threads without awaiting them
+    tasks = [asyncio.to_thread(find_current_price, ticker) for ticker, balance, _ in rows]
+    # Grab all results at once, handling exceptions
+    prices = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for (ticker, balance, _), current_price in zip(rows, prices):
+        if isinstance(current_price, Exception):
+            logger.error(f"Could not get the current price for {ticker}: {current_price}")
             lines.append(f"<b>{ticker}</b>: ${balance:.2f} (price unavailable)")
             continue
 
@@ -137,9 +152,18 @@ async def month_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await bank_show(update, context)
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    filenames = [
+        f"portfolio_history_total_{uid}.png",
+        f"portfolio_history_by_ticker_{uid}.png",
+        f"portfolio_prices_with_buys_{uid}.png",
+        f"portfolio_prices_with_buys2_{uid}.png",
+    ]
+
     portfolio_df = await asyncio.to_thread(initialize_portfolio)
     portfolio_df['purchase_date'] = pd.to_datetime(portfolio_df['purchase_date']).dt.tz_localize(None)
 
+    # We wrap with try-except because it is an external API
     try:
         prices_df, holdings_df, total_value = await asyncio.to_thread(
             compute_portfolio_history,
@@ -147,57 +171,26 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     except Exception as e:
         logger.error(f"Could not fetch portfolio history: {e}", exc_info=True)
-        response = "I am sorry, I could not fetch the portfolio history."
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="I am sorry, I could not fetch the portfolio history.")
         return
 
     events_by_date, events_per_ticker = build_purchase_events(portfolio_df, prices_df.index)
 
-    # Generate and save plots
-    await asyncio.to_thread(
-        plot_portfolio_history_total,
-        total_value,
-        'portfolio_history_total.png',
-        events_by_date=events_by_date
-    )
-    await asyncio.to_thread(
-        plot_portfolio_history_by_ticker,
-        holdings_df,
-        prices_df,
-        'portfolio_history_by_ticker.png',
-        events_per_ticker=events_per_ticker
-    )
+    try:
+        await asyncio.gather(
+            asyncio.to_thread(plot_portfolio_history_total, total_value, filenames[0], events_by_date=events_by_date),
+            asyncio.to_thread(plot_portfolio_history_by_ticker, holdings_df, prices_df, filenames[1], events_per_ticker=events_per_ticker),
+            asyncio.to_thread(plot_prices_with_purchase_markers, prices_df, events_per_ticker, filenames[2], normalize=False),
+            asyncio.to_thread(plot_prices_with_purchase_markers, prices_df, events_per_ticker, filenames[3], normalize=True),
+        )
 
-    await asyncio.to_thread(
-        plot_prices_with_purchase_markers,
-        prices_df,
-        events_per_ticker,
-        'portfolio_prices_with_buys.png',
-        normalize=False  # raw dollar prices
-    )
-
-    await asyncio.to_thread(
-        plot_prices_with_purchase_markers,
-        prices_df,
-        events_per_ticker,
-        'portfolio_prices_with_buys2.png',
-        normalize=True  # percentage rises
-    )
-
-    # Send the images
-    with open('portfolio_history_total.png', 'rb') as f1:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f1)
-    with open('portfolio_history_by_ticker.png', 'rb') as f2:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f2)
-    with open('portfolio_prices_with_buys.png', 'rb') as f3:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f3)
-    with open('portfolio_prices_with_buys2.png', 'rb') as f4:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f4)
-
-    # Clean up generated images if they exist
-    for path in ['portfolio_history_total.png', 'portfolio_history_by_ticker.png',
-                    'portfolio_prices_with_buys.png', 'portfolio_prices_with_buys2.png']:
-        os.remove(path)
+        for path in filenames:
+            with open(path, 'rb') as f:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+    finally:
+        for path in filenames:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 async def abort_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -254,6 +247,14 @@ def main():
     application.add_handler(CommandHandler("portfolio", portfolio, filters=filters.User(user_id=ADMIN_IDS)))
     application.add_handler(CommandHandler("month_summary", month_summary, filters=filters.User(user_id=ADMIN_IDS)))
     application.add_handler(CommandHandler("history", history, filters=filters.User(user_id=ADMIN_IDS)))
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(context.error, NetworkError):
+            logger.warning(f"Transient network error (retrying): {context.error}")
+            return
+        logger.error("Unexpected error", exc_info=context.error)
+
+    application.add_error_handler(error_handler)
 
     logger.info("Bot is up!")
     application.run_polling()
