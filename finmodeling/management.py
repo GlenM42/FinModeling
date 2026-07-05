@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from retry import retry
@@ -53,7 +54,7 @@ def fetch_stock_data(ticker: str, start_date: str) -> tuple[float, float]:
     return price, dividends
 
 
-def calculate_performance(portfolio: pd.DataFrame) -> pd.DataFrame:
+async def calculate_performance(portfolio: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates performance metrics for the portfolio based on current prices and dividends received after purchase dates.
     
@@ -71,17 +72,23 @@ def calculate_performance(portfolio: pd.DataFrame) -> pd.DataFrame:
     - dividend return
     - total return
 
-    Returns updated pandas dataframe
+    Returns updated pandas dataframe; Can raise RuntimeError if all tickers fail to fetch data.
     """
     portfolio['current price'] = 0.0
     portfolio['dividends'] = 0.0
-    for index, row in portfolio.iterrows():
-        # Adjust column names here to match the DataFrame
-        try:
-            current_price, dividends = fetch_stock_data(row['ticker'], row['purchase_date'])
-        except Exception as e:
-            logger.error(f"We could not fetch data for the ticker {row['ticker']}: {e}", exc_info=True)
-            continue # skip this row
+
+    tasks = [asyncio.to_thread(fetch_stock_data, row['ticker'], row['purchase_date']) for _, row in portfolio.iterrows()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    if all(isinstance(result, Exception) for result in results):
+        logger.error(f"We could not fetch data for the tickers")
+        raise RuntimeError("Failed to fetch stock data for all tickers.")
+
+    for (index, row), result in zip(portfolio.iterrows(), results):
+        if isinstance(result, Exception):
+            logger.error(f"We could not fetch data for the ticker {row['ticker']}: {result}", exc_info=True)
+            continue  # skip this row
+        
+        current_price, dividends = result
 
         portfolio.at[index, 'current price'] = round(current_price, 2)
         portfolio.at[index, 'dividends'] = round(dividends, 2)
