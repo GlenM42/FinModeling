@@ -139,8 +139,7 @@ def calculate_aggregate_performance(portfolio_performance: pd.DataFrame) -> pd.D
     total_quantity = portfolio_performance['quantity'].sum()
     total_return = portfolio_performance['total return'].sum()
     total_investment_value = portfolio_performance['investment value'].sum()
-    total_dividends = portfolio_performance['dividends'].sum()
-    total_percentage_return = ((total_return + total_dividends) / total_investment_value) * 100
+    total_percentage_return = (total_return / total_investment_value) * 100
 
     # Append the total row to the aggregated portfolio
     total_row = pd.DataFrame({
