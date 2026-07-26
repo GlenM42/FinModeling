@@ -18,21 +18,15 @@ pd.set_option('display.max_rows', None)
 
 
 @retry(tries=3, delay=2)
-def fetch_stock_data(ticker: str, start_date: str) -> tuple[float, float]:
+def fetch_ticker_data(ticker: str) -> tuple[float, pd.Series]:
     """
-    Fetches the current stock/ETF price and calculates dividends issued after the start_date_str and before the current
-    date for a given ticker.
+    Fetches the current stock/ETF price and the full dividend history for a given ticker.
 
     Due to unstability of the Yahoo API, this method can raise exceptions. Some of them can be
-    solved due to retry. It is the responsibility of the caller to catch them. 
+    solved due to retry. It is the responsibility of the caller to catch them.
     """
-    # Convert start_date_str to a datetime object and ensure it's timezone-aware
-    start_date = pd.to_datetime(start_date).tz_localize(pytz.UTC)
-    # Current datetime also made timezone-aware
-    end_date = pd.to_datetime(datetime.now()).tz_localize(pytz.UTC)
-
     stock_data = yf.Ticker(ticker)
-    
+
     # For unknown reasons, some tickers do not have 'currentPrice',
     # so we get the next best value -- the bid
     price = stock_data.info.get('currentPrice') or stock_data.info.get('bid')
@@ -42,16 +36,25 @@ def fetch_stock_data(ticker: str, start_date: str) -> tuple[float, float]:
     # Check if the dividend index is tz-aware or not
     if stock_data.dividends.index.tz is None:
         # Index is tz-naive, localize it to UTC
-        dividends_index_aware = stock_data.dividends.index.tz_localize(pytz.UTC, ambiguous='infer')
+        dividends = stock_data.dividends.tz_localize(pytz.UTC, ambiguous='infer')
     else:
         # Index is already tz-aware, convert it to UTC
-        dividends_index_aware = stock_data.dividends.index.tz_convert(pytz.UTC)
+        dividends = stock_data.dividends.tz_convert(pytz.UTC)
 
-    # Correctly filter dividends based on the adjusted dates
-    dividends = stock_data.dividends[(dividends_index_aware >= start_date) &
-                                        (dividends_index_aware < end_date)].sum()
-    
     return price, dividends
+
+
+def dividends_since(dividends: pd.Series, start_date: str) -> float:
+    """
+    Sums dividends issued after start_date and before the current date, given the full
+    (tz-aware) dividend history series for a ticker.
+    """
+    # Convert start_date_str to a datetime object and ensure it's timezone-aware
+    start_date = pd.to_datetime(start_date).tz_localize(pytz.UTC)
+    # Current datetime also made timezone-aware
+    end_date = pd.to_datetime(datetime.now()).tz_localize(pytz.UTC)
+
+    return dividends[(dividends.index >= start_date) & (dividends.index < end_date)].sum()
 
 
 async def calculate_performance(portfolio: pd.DataFrame) -> pd.DataFrame:
@@ -77,21 +80,32 @@ async def calculate_performance(portfolio: pd.DataFrame) -> pd.DataFrame:
     portfolio['current price'] = 0.0
     portfolio['dividends'] = 0.0
 
-    tasks = [asyncio.to_thread(fetch_stock_data, row['ticker'], row['purchase_date']) for _, row in portfolio.iterrows()]
+    # This will allow us to reduce the number of calls to fetch_ticker_data by fetching data for each unique ticker only once
+    unique_tickers = portfolio['ticker'].unique()
+
+    tasks = [asyncio.to_thread(fetch_ticker_data, ticker) for ticker in unique_tickers]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    if all(isinstance(result, Exception) for result in results):
+
+    ticker_data = {}
+    for ticker, result in zip(unique_tickers, results):
+        if isinstance(result, Exception):
+            logger.error(f"We could not fetch data for the ticker {ticker}: {result}", exc_info=True)
+            continue  # skip this ticker
+        ticker_data[ticker] = result
+
+    if not ticker_data:
         logger.error(f"We could not fetch data for the tickers")
         raise RuntimeError("Failed to fetch stock data for all tickers.")
 
-    for (index, row), result in zip(portfolio.iterrows(), results):
-        if isinstance(result, Exception):
-            logger.error(f"We could not fetch data for the ticker {row['ticker']}: {result}", exc_info=True)
-            continue  # skip this row
-        
-        current_price, dividends = result
+    for index, row in portfolio.iterrows():
+        data = ticker_data.get(row['ticker'])
+        if data is None:
+            continue  # skip this row, its ticker failed to fetch
+
+        current_price, dividends = data
 
         portfolio.at[index, 'current price'] = round(current_price, 2)
-        portfolio.at[index, 'dividends'] = round(dividends, 2)
+        portfolio.at[index, 'dividends'] = round(dividends_since(dividends, row['purchase_date']), 2)
 
     # Ensure data types are correct for calculations
     portfolio['quantity'] = portfolio['quantity'].astype(float)
