@@ -3,7 +3,7 @@ import asyncio
 from telegram import Update
 from telegram.ext import ConversationHandler, ContextTypes
 
-from finmodeling.database import remove_transactions, add_transaction, bank_get_balance, bank_deduct
+from finmodeling import commands
 
 TICKER, CONFIRM_TICKER, QUANTITY, PURCHASE_DATE, PURCHASE_PRICE, CONFIRMATION = range(6)
 REMOVE_TICKER, REMOVE_DATE, REMOVE_CONFIRMATION = range(6, 9)
@@ -41,10 +41,9 @@ async def remove_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         ticker = context.user_data['remove_ticker']
         purchase_date = context.user_data['remove_date']
 
-        # Call the function to remove the transaction from the database
-        await asyncio.to_thread(remove_transactions, user_id, ticker, purchase_date)
+        result = await asyncio.to_thread(commands.remove_transaction_cmd, user_id, ticker, purchase_date)
 
-        await update.message.reply_text("Transaction removed successfully.")
+        await update.message.reply_text(result.message)
     else:
         await update.message.reply_text("Operation cancelled. No transactions were removed.")
 
@@ -118,12 +117,20 @@ async def final_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE)
         quantity = context.user_data['quantity']
         purchase_date = context.user_data['purchase_date']
         purchase_price = context.user_data['purchase_price']
-        total_cost = round(quantity * purchase_price, 2)
 
-        await asyncio.to_thread(add_transaction, user_id, ticker, quantity, purchase_price, purchase_date)
+        try:
+            result = await asyncio.to_thread(
+                commands.add_transaction_cmd,
+                user_id, ticker, quantity, purchase_price, purchase_date,
+                deduct_from_bank=False,
+            )
+        except commands.CommandError as e:
+            await update.message.reply_text(str(e))
+            context.user_data.clear()
+            return ConversationHandler.END
 
         await update.message.reply_text(
-            f"Recorded. Deduct ${total_cost:.2f} from your {ticker} bank balance? (yes/no)"
+            f"Recorded. Deduct ${result.total_cost:.2f} from your {ticker} bank balance? (yes/no)"
         )
         return BANK_DEDUCT
     else:
@@ -141,15 +148,10 @@ async def bank_deduct_response(update: Update, context: ContextTypes.DEFAULT_TYP
         purchase_price = context.user_data['purchase_price']
         total_cost = round(quantity * purchase_price, 2)
 
-        current_balance = await asyncio.to_thread(bank_get_balance, user_id, ticker)
-        if total_cost > current_balance:
-            await update.message.reply_text(
-                f"Note: purchase (${total_cost:.2f}) exceeds current bank balance (${current_balance:.2f}) — "
-                f"balance will go negative."
-            )
-        await asyncio.to_thread(bank_deduct, user_id, ticker, total_cost)
-        new_balance = await asyncio.to_thread(bank_get_balance, user_id, ticker)
-        await update.message.reply_text(f"{ticker} bank balance: ${new_balance:.2f}.")
+        adjustment = await asyncio.to_thread(commands.apply_bank_deduction, user_id, ticker, total_cost)
+        if adjustment.warning:
+            await update.message.reply_text(f"Note: {adjustment.warning}")
+        await update.message.reply_text(f"{ticker} bank balance: ${adjustment.new_balance:.2f}.")
     else:
         await update.message.reply_text("Bank unchanged.")
 

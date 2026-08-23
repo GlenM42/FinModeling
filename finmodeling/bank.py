@@ -3,7 +3,7 @@ import asyncio
 from telegram import Update
 from telegram.ext import ConversationHandler, ContextTypes
 
-from finmodeling.database import bank_deposit, bank_get_balance
+from finmodeling import commands
 
 # Conversation states — high range to avoid collision with existing handlers (0-9)
 DEPOSIT_TICKER, DEPOSIT_AMOUNT = 20, 21
@@ -27,21 +27,15 @@ async def deposit_ticker_received(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def deposit_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        amount = float(update.message.text)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("Please enter a valid positive dollar amount.")
-        return DEPOSIT_AMOUNT
-
     user_id = update.effective_user.id
     ticker = context.user_data['deposit_ticker']
 
-    await asyncio.to_thread(bank_deposit, user_id, ticker, amount)
-    new_balance = await asyncio.to_thread(bank_get_balance, user_id, ticker)
-    reply = f"Deposited ${amount:.2f} into {ticker}. New balance: ${new_balance:.2f}."
+    try:
+        result = await asyncio.to_thread(commands.deposit_cmd, user_id, ticker, update.message.text)
+    except commands.CommandError as e:
+        await update.message.reply_text(str(e))
+        return DEPOSIT_AMOUNT
 
-    await update.message.reply_text(reply)
+    await update.message.reply_text(result.message)
     context.user_data.pop('deposit_ticker', None)
     return ConversationHandler.END

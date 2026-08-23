@@ -34,4 +34,4 @@ USER cthulhu
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Run the bot
-CMD ["python", "./telegram_bot.py"]
+CMD ["python", "-m", "bot.telegram.main"]
